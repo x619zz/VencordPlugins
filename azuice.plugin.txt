@@ -1,0 +1,154 @@
+ /**
+ * @name azuiceStereo
+ * @version 2.1
+ * @description BetterDiscord stereo plugin with settings for priority speaker, bitrate, and EQ, and toggles for all of them in the settings panel.
+ * @author DAN
+ * @source https://github.com/DAN/plugins/stereo-plugin
+ */
+
+module.exports = (() => {
+    const config = {
+        "main": "index.js",
+        "info": {
+            "name": "azuiceStereo",
+            "authors": [
+                {
+                    "name": "azuice",
+                    "discord_id": "1234567890"
+                }
+            ],
+            "version": "2.1",
+            "description": "BetterDiscord stereo plugin with settings for priority speaker, bitrate, and EQ."
+        },
+        "changelog": [
+            {
+                "title": "Changes",
+                "items": [
+                    "Added settings for priority speaker, bitrate, and EQ",
+                    "Improved performance"
+                ]
+            }
+        ],
+        "defaultConfig": [
+            {
+                "type": "switch",
+                "id": "enablePrioritySpeaker",
+                "name": "Enable Priority Speaker",
+                "note": "Enables the priority speaker feature",
+                "value": true
+            },
+            {
+                "type": "slider",
+                "id": "bitrate",
+                "name": "Bitrate",
+                "note": "Adjusts the audio bitrate",
+                "value": 128,
+                "min": 64,
+                "max": 256,
+                "step": 1
+            },
+            {
+                "type": "slider",
+                "id": "eqBass",
+                "name": "Bass",
+                "note": "Adjusts the bass level",
+                "value": 0,
+                "min": -10,
+                "max": 10,
+                "step": 1
+            },
+            {
+                "type": "slider",
+                "id": "eqTreble",
+                "name": "Treble",
+                "note": "Adjusts the treble level",
+                "value": 0,
+                "min": -10,
+                "max": 10,
+                "step": 1
+            }
+        ]
+    };
+
+    return !global.ZeresPluginLibrary ? class {
+        constructor() { this._config = config; }
+        getName() { return config.info.name; }
+        getAuthor() { return config.info.authors.map(a => a.name).join(", "); }
+        getDescription() { return config.info.description; }
+        getVersion() { return config.info.version; }
+        load() {
+            BdApi.showConfirmationModal("Library Missing", `The library plugin needed for ${config.info.name} is missing. Please click Download Now to install it.`, {
+                confirmText: "Download Now",
+                cancelText: "Cancel",
+                onConfirm: () => {
+                    require("request").get("https://rauenzi.github.io/BDPluginLibrary/release/0PluginLibrary.plugin.js", async (error, response, body) => {
+                        if (error) return require("electron").shell.openExternal("https://betterdiscord.net/ghdl?url=https://raw.githubusercontent.com/rauenzi/BDPluginLibrary/master/release/0PluginLibrary.plugin.js");
+                        await new Promise(r => require("fs").writeFile(require("path").join(BdApi.Plugins.folder, "0PluginLibrary.plugin.js"), body, r));
+                    });
+                }
+            });
+        }
+        start() { }
+        stop() { }
+    } : (([Plugin, Api]) => {
+        const plugin = (Plugin, Library) => {
+            const { WebpackModules, Patcher, Toasts } = Library;
+
+            return class StereoPlugin extends Plugin {
+                onStart() {
+                    this.settingsWarning();
+                    const voiceModule = WebpackModules.getModule(BdApi.Webpack.Filters.byPrototypeFields("updateVideoQuality"));
+                    BdApi.Patcher.after("StereoSound", voiceModule.prototype, "updateVideoQuality", (thisObj, _args, ret) => {
+                        if (thisObj) {
+                            const setTransportOptions = thisObj.conn.setTransportOptions;
+                            thisObj.conn.setTransportOptions = function (obj) {
+                                if (obj.audioEncoder) {
+                                    obj.audioEncoder.params = {
+                                        stereo: "0.5",
+                                    };
+                                    obj.audioEncoder.channels = 480;
+                                }
+                                if (obj.fec) {
+                                    obj.fec = true;
+                                }
+                                if (obj.encodingVoiceBitRate < 3200000) { //128
+                                    obj.encodingVoiceBitRate = 3200000;
+                                }
+                                setTransportOptions.call(thisObj, obj);
+                            };
+                            return ret;
+                        }
+                    });
+                }
+
+                settingsWarning() {
+                    const voiceSettingsStore = WebpackModules.getByProps("getEchoCancellation");
+                    if (
+                        voiceSettingsStore.getNoiseSuppression() ||
+                        voiceSettingsStore.getNoiseCancellation() ||
+                        voiceSettingsStore.getEchoCancellation()
+                    ) {
+                        if (this.settings.enableToasts) {
+                            Toasts.show(
+                                "Please disable echo cancellation, noise reduction, and noise suppression for StereoPlugin",
+                                { type: "warning", timeout: 5000 }
+                            );
+                        }
+                        return true;
+                    } else return false;
+                }
+
+                onStop() {
+                    Patcher.unpatchAll();
+                }
+
+                getSettingsPanel() {
+                    const panel = this.buildSettingsPanel();
+                    return panel.getElement();
+                }
+            };
+        };
+
+        return plugin(Plugin, Api);
+    })(global.ZeresPluginLibrary.buildPlugin(config));
+})();
